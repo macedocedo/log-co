@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LogiFIFO — Sistema</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- ⚠️ CONFIGURE AQUI: substitua pelos valores do seu projeto Supabase -->
+  <script>
+    const SUPABASE_URL = 'https://SEU_PROJETO.supabase.co';
+    const SUPABASE_KEY = 'SUA_ANON_KEY_AQUI';
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- ZXing para leitura de QR Code / Barcode via câmera -->
+  <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     TOPBAR
+═══════════════════════════════════════════════════════════ -->
+<div class="app-layout">
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="logo-sm">📦</div>
+      LogiFIFO
+    </div>
+    <div class="topbar-right">
+      <div class="user-badge">
+        <span class="dot"></span>
+        <span id="user-email-display">...</span>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <!-- NAV TABS -->
+  <nav class="nav-tabs">
+    <button class="nav-tab active" data-tab="dashboard">📊 Dashboard</button>
+    <button class="nav-tab" data-tab="batches">📋 Lotes</button>
+    <button class="nav-tab" data-tab="items">🗂️ Itens</button>
+    <button class="nav-tab" data-tab="movements">🔄 Movimentações</button>
+  </nav>
+
+  <!-- MAIN -->
+  <main class="main-content">
+
+    <!-- ─── TOAST CONTAINER ─── -->
+    <div id="toast-container"></div>
+
+    <!-- ═══════════════════════════════════
+         TAB: DASHBOARD
+    ═══════════════════════════════════ -->
+    <section class="page-section active" id="tab-dashboard">
+
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card blue">
+          <div class="stat-label">Total de Lotes</div>
+          <div class="stat-value" id="stat-total">—</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-label">Lotes Ativos</div>
+          <div class="stat-value" id="stat-active">—</div>
+        </div>
+        <div class="stat-card warn">
+          <div class="stat-label">Vencendo em 30d</div>
+          <div class="stat-value" id="stat-warn">—</div>
+        </div>
+        <div class="stat-card danger">
+          <div class="stat-label">Vencidos</div>
+          <div class="stat-value" id="stat-expired">—</div>
+        </div>
+      </div>
+
+      <!-- Notificação de vencimento -->
+      <div class="notif-bar" id="notif-bar">
+        <div class="notif-icon">⚠️</div>
+        <div class="notif-content">
+          <div class="notif-title">Atenção: Lotes próximos do vencimento (≤ 30 dias)</div>
+          <ul class="notif-list" id="notif-list"></ul>
+        </div>
+      </div>
+
+      <!-- FIFO próximos lotes -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">⚡ Próximos a Consumir (FIFO)</span>
+          <span class="fifo-tag">FIFO</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Lote</th>
+                <th>Local</th>
+                <th>Qtd</th>
+                <th>Vencimento</th>
+                <th>Dias</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="fifo-table-body">
+              <tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📦</div><p>Nenhum lote ativo</p></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════
+         TAB: LOTES
+    ═══════════════════════════════════ -->
+    <section class="page-section" id="tab-batches">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📋 Lotes Cadastrados</span>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary btn-sm" id="btn-qr-scan">📷 Ler QR/Código</button>
+            <button class="btn btn-primary btn-sm" id="btn-new-batch">+ Novo Lote</button>
+          </div>
+        </div>
+
+        <div class="search-bar">
+          <div class="search-input-wrap">
+            <span class="icon">🔍</span>
+            <input type="text" id="search-batches" placeholder="Buscar por item, lote, local..." />
+          </div>
+          <select id="filter-status" style="
+            background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);
+            color:var(--text);font-family:var(--font-mono);font-size:13px;padding:8px 12px;outline:none;
+          ">
+            <option value="">Todos status</option>
+            <option value="active">Ativo</option>
+            <option value="consumed">Consumido</option>
+            <option value="expired">Vencido</option>
+          </select>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Lote</th>
+                <th>Local</th>
+                <th>Qtd</th>
+                <th>Entrada</th>
+                <th>Vencimento</th>
+                <th>Dias</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="batches-table-body">
+              <tr><td colspan="9"><div class="empty-state"><div class="empty-icon">📋</div><p>Nenhum lote cadastrado</p></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════
+         TAB: ITENS
+    ═══════════════════════════════════ -->
+    <section class="page-section" id="tab-items">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">🗂️ Itens Cadastrados</span>
+          <button class="btn btn-primary btn-sm" id="btn-new-item">+ Novo Item</button>
+        </div>
+
+        <div class="search-bar">
+          <div class="search-input-wrap">
+            <span class="icon">🔍</span>
+            <input type="text" id="search-items" placeholder="Buscar por nome, SKU, categoria..." />
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>SKU</th>
+                <th>Categoria</th>
+                <th>Unidade</th>
+                <th>Local Padrão</th>
+                <th>Estoque mín.</th>
+                <th>Lotes ativos</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="items-table-body">
+              <tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🗂️</div><p>Nenhum item cadastrado</p></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════
+         TAB: MOVIMENTAÇÕES
+    ═══════════════════════════════════ -->
+    <section class="page-section" id="tab-movements">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">🔄 Histórico de Movimentações</span>
+          <button class="btn btn-primary btn-sm" id="btn-new-movement">+ Registrar Movimento</button>
+        </div>
+
+        <div class="search-bar">
+          <div class="search-input-wrap">
+            <span class="icon">🔍</span>
+            <input type="text" id="search-movements" placeholder="Buscar por item, lote, motivo..." />
+          </div>
+          <select id="filter-movement-type" style="
+            background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);
+            color:var(--text);font-family:var(--font-mono);font-size:13px;padding:8px 12px;outline:none;
+          ">
+            <option value="">Todos os tipos</option>
+            <option value="entrada">Entrada</option>
+            <option value="saida">Saída</option>
+            <option value="ajuste">Ajuste</option>
+          </select>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Tipo</th>
+                <th>Item</th>
+                <th>Lote</th>
+                <th>Quantidade</th>
+                <th>Motivo</th>
+              </tr>
+            </thead>
+            <tbody id="movements-table-body">
+              <tr><td colspan="6"><div class="empty-state"><div class="empty-icon">🔄</div><p>Nenhuma movimentação</p></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODAL: NOVO/EDITAR LOTE
+═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-batch">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-batch-title">Novo Lote</span>
+      <button class="modal-close" data-close="modal-batch">✕</button>
+    </div>
+
+    <!-- QR Reader -->
+    <div class="camera-area" id="camera-area">
+      <video id="qr-video" playsinline></video>
+      <div id="camera-placeholder">
+        <div style="font-size:36px;opacity:.4">📷</div>
+        <p class="text-muted">Câmera para leitura de QR/Código de Barras</p>
+        <button class="btn btn-secondary btn-sm" id="btn-start-camera">Ativar Câmera</button>
+      </div>
+      <div class="qr-result" id="qr-result"></div>
+    </div>
+
+    <input type="hidden" id="batch-id" />
+
+    <div class="form-grid">
+      <div class="field field-full">
+        <label>Item *</label>
+        <select id="batch-item-id">
+          <option value="">— Selecione um item —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Número do Lote *</label>
+        <input type="text" id="batch-lot" placeholder="LOT-2024-001" />
+      </div>
+      <div class="field">
+        <label>Quantidade *</label>
+        <input type="number" id="batch-qty" placeholder="0" min="1" />
+      </div>
+      <div class="field">
+        <label>Data de Entrada</label>
+        <input type="date" id="batch-entry" />
+      </div>
+      <div class="field">
+        <label>Data de Vencimento *</label>
+        <input type="date" id="batch-expiry" />
+      </div>
+      <div class="field field-full">
+        <label>Localização</label>
+        <input type="text" id="batch-location" placeholder="Ex: Prateleira A3, Câmara Fria" />
+      </div>
+      <div class="field field-full">
+        <label>Observações</label>
+        <input type="text" id="batch-notes" placeholder="Observações opcionais..." />
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" data-close="modal-batch">Cancelar</button>
+      <button class="btn btn-primary" id="btn-save-batch">💾 Salvar Lote</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODAL: NOVO/EDITAR ITEM
+═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-item">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-item-title">Novo Item</span>
+      <button class="modal-close" data-close="modal-item">✕</button>
+    </div>
+
+    <input type="hidden" id="item-id" />
+
+    <div class="form-grid">
+      <div class="field field-full">
+        <label>Nome do Item *</label>
+        <input type="text" id="item-name" placeholder="Nome do produto/insumo" />
+      </div>
+      <div class="field">
+        <label>SKU / Código</label>
+        <input type="text" id="item-sku" placeholder="SKU-001" />
+      </div>
+      <div class="field">
+        <label>Categoria</label>
+        <input type="text" id="item-category" placeholder="Ex: Alimentos, Químicos" />
+      </div>
+      <div class="field">
+        <label>Unidade</label>
+        <select id="item-unit">
+          <option value="un">Unidade (un)</option>
+          <option value="kg">Quilograma (kg)</option>
+          <option value="g">Grama (g)</option>
+          <option value="L">Litro (L)</option>
+          <option value="mL">Mililitro (mL)</option>
+          <option value="cx">Caixa (cx)</option>
+          <option value="pct">Pacote (pct)</option>
+          <option value="m">Metro (m)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Local Padrão</label>
+        <input type="text" id="item-location" placeholder="Ex: Depósito Central" />
+      </div>
+      <div class="field">
+        <label>Estoque Mínimo</label>
+        <input type="number" id="item-min-stock" placeholder="0" min="0" />
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" data-close="modal-item">Cancelar</button>
+      <button class="btn btn-primary" id="btn-save-item">💾 Salvar Item</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODAL: NOVA MOVIMENTAÇÃO
+═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-movement">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Registrar Movimentação</span>
+      <button class="modal-close" data-close="modal-movement">✕</button>
+    </div>
+
+    <div class="form-grid">
+      <div class="field field-full">
+        <label>Tipo *</label>
+        <select id="mov-type">
+          <option value="entrada">📥 Entrada</option>
+          <option value="saida">📤 Saída</option>
+          <option value="ajuste">⚖️ Ajuste</option>
+        </select>
+      </div>
+      <div class="field field-full">
+        <label>Item *</label>
+        <select id="mov-item-id">
+          <option value="">— Selecione um item —</option>
+        </select>
+      </div>
+      <div class="field field-full">
+        <label>Lote (opcional)</label>
+        <select id="mov-batch-id">
+          <option value="">— Selecione o lote —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Quantidade *</label>
+        <input type="number" id="mov-qty" placeholder="0" min="1" />
+      </div>
+      <div class="field field-full">
+        <label>Motivo / Observação</label>
+        <input type="text" id="mov-reason" placeholder="Ex: Venda, Transferência, Perda..." />
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" data-close="modal-movement">Cancelar</button>
+      <button class="btn btn-primary" id="btn-save-movement">💾 Registrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODAL: CONFIRMAR EXCLUSÃO
+═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-confirm">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <span class="modal-title">⚠️ Confirmar Exclusão</span>
+      <button class="modal-close" data-close="modal-confirm">✕</button>
+    </div>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:8px" id="confirm-text">
+      Tem certeza que deseja excluir este registro?
+    </p>
+    <p style="color:var(--danger);font-size:12px">Esta ação não pode ser desfeita.</p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" data-close="modal-confirm">Cancelar</button>
+      <button class="btn btn-danger" id="btn-confirm-delete">🗑️ Excluir</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     JAVASCRIPT
+═══════════════════════════════════════════════════════════ -->
+<script>
+// ── SUPABASE INIT ──────────────────────────────────────────
+const { createClient } = supabase;
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let currentUser = null;
+let allItems    = [];
+let allBatches  = [];
+let allMovements = [];
+
+// ── AUTH CHECK ─────────────────────────────────────────────
+async function initAuth() {
+  const { data } = await sb.auth.getSession();
+  if (!data.session) {
+    window.location.href = 'index.html';
+    return;
+  }
+  currentUser = data.session.user;
+  document.getElementById('user-email-display').textContent = currentUser.email;
+  await loadAll();
+}
+
+document.getElementById('btn-logout').onclick = async () => {
+  await sb.auth.signOut();
+  window.location.href = 'index.html';
+};
+
+// ── TOAST ──────────────────────────────────────────────────
+function toast(msg, type = 'success') {
+  const el = document.createElement('div');
+  el.className = `toast ${type === 'error' ? 'error' : type === 'warn' ? 'warn' : ''}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── MODALS ─────────────────────────────────────────────────
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+  stopCamera();
+}
+
+document.querySelectorAll('[data-close]').forEach(btn => {
+  btn.onclick = () => closeModal(btn.dataset.close);
+});
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.onclick = (e) => { if (e.target === overlay) closeModal(overlay.id); }
+});
+
+// ── TABS ───────────────────────────────────────────────────
+document.querySelectorAll('.nav-tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  };
+});
+
+// ── DATE HELPERS ───────────────────────────────────────────
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function daysUntil(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const now = new Date(); now.setHours(0,0,0,0);
+  return Math.round((d - now) / 86400000);
+}
+
+function fmtDate(dateStr) {
+  if (!dateStr) return '—';
+  const [y, m, d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function fmtDateTime(isoStr) {
+  if (!isoStr) return '—';
+  const d = new Date(isoStr);
+  return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function statusBadge(days, status) {
+  if (status === 'consumed') return '<span class="badge badge-gray">Consumido</span>';
+  if (status === 'expired' || days < 0) return '<span class="badge badge-danger">⚠ Vencido</span>';
+  if (days <= 30) return '<span class="badge badge-warn">⏳ ' + days + 'd</span>';
+  return '<span class="badge badge-green">✓ OK</span>';
+}
+
+function daysBadge(days) {
+  if (days < 0) return `<span style="color:var(--danger);font-weight:600">${days}d</span>`;
+  if (days <= 30) return `<span style="color:var(--warn);font-weight:600">${days}d</span>`;
+  return `<span style="color:var(--accent)">${days}d</span>`;
+}
+
+// ── LOAD ALL DATA ──────────────────────────────────────────
+async function loadAll() {
+  await Promise.all([loadItems(), loadBatches(), loadMovements()]);
+  renderDashboard();
+  renderBatches();
+  renderItems();
+  renderMovements();
+  populateSelects();
+}
+
+async function loadItems() {
+  const { data, error } = await sb
+    .from('items')
+    .select('*')
+    .order('name');
+  if (!error) allItems = data || [];
+}
+
+async function loadBatches() {
+  const { data, error } = await sb
+    .from('batches')
+    .select('*, items(name, unit)')
+    .order('expiry_date');
+  if (!error) allBatches = data || [];
+}
+
+async function loadMovements() {
+  const { data, error } = await sb
+    .from('movements')
+    .select('*, items(name), batches(lot_number)')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (!error) allMovements = data || [];
+}
+
+// ── POPULATE SELECTS ───────────────────────────────────────
+function populateSelects() {
+  const opts = allItems.map(i => `<option value="${i.id}">${i.name}${i.sku ? ' ['+i.sku+']' : ''}</option>`).join('');
+  ['batch-item-id', 'mov-item-id'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<option value="">— Selecione um item —</option>' + opts;
+  });
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────
+function renderDashboard() {
+  const active  = allBatches.filter(b => b.status === 'active');
+  const expired = allBatches.filter(b => b.status === 'active' && daysUntil(b.expiry_date) < 0);
+  const warning = allBatches.filter(b => b.status === 'active' && daysUntil(b.expiry_date) >= 0 && daysUntil(b.expiry_date) <= 30);
+
+  document.getElementById('stat-total').textContent   = allBatches.length;
+  document.getElementById('stat-active').textContent  = active.length;
+  document.getElementById('stat-warn').textContent    = warning.length;
+  document.getElementById('stat-expired').textContent = expired.length;
+
+  // Notification bar
+  const notifBar  = document.getElementById('notif-bar');
+  const notifList = document.getElementById('notif-list');
+  const criticals = [...expired, ...warning].sort((a,b) => new Date(a.expiry_date) - new Date(b.expiry_date));
+
+  if (criticals.length > 0) {
+    notifBar.classList.add('visible');
+    notifList.innerHTML = criticals.slice(0, 8).map(b => {
+      const days = daysUntil(b.expiry_date);
+      const label = days < 0 ? `VENCIDO há ${Math.abs(days)} dias` : `vence em ${days} dias`;
+      return `<li><strong>${b.items?.name || '—'}</strong> · Lote ${b.lot_number} · ${label} · Venc: ${fmtDate(b.expiry_date)}</li>`;
+    }).join('');
+  } else {
+    notifBar.classList.remove('visible');
+  }
+
+  // FIFO table
+  const fifoBody = document.getElementById('fifo-table-body');
+  const fifoItems = allBatches.filter(b => b.status === 'active')
+    .sort((a, b) => new Date(a.expiry_date) - new Date(b.expiry_date))
+    .slice(0, 10);
+
+  if (fifoItems.length === 0) {
+    fifoBody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📦</div><p>Nenhum lote ativo</p></div></td></tr>`;
+    return;
+  }
+
+  fifoBody.innerHTML = fifoItems.map(b => {
+    const days = daysUntil(b.expiry_date);
+    return `<tr>
+      <td><strong>${b.items?.name || '—'}</strong></td>
+      <td><code style="color:var(--accent)">${b.lot_number}</code></td>
+      <td>${b.location || '—'}</td>
+      <td>${b.quantity} ${b.items?.unit || ''}</td>
+      <td>${fmtDate(b.entry_date)}</td>
+      <td>${fmtDate(b.expiry_date)}</td>
+      <td>${daysBadge(days)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── BATCHES ────────────────────────────────────────────────
+function renderBatches(filter = '') {
+  const search  = (document.getElementById('search-batches')?.value || filter).toLowerCase();
+  const status  = document.getElementById('filter-status')?.value || '';
+  const body    = document.getElementById('batches-table-body');
+
+  let rows = allBatches.filter(b => {
+    const matchSearch = !search ||
+      (b.items?.name || '').toLowerCase().includes(search) ||
+      b.lot_number.toLowerCase().includes(search) ||
+      (b.location || '').toLowerCase().includes(search);
+    const matchStatus = !status || b.status === status;
+    return matchSearch && matchStatus;
+  });
+
+  if (rows.length === 0) {
+    body.innerHTML = `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">📋</div><p>Nenhum resultado encontrado</p></div></td></tr>`;
+    return;
+  }
+
+  body.innerHTML = rows.map(b => {
+    const days = daysUntil(b.expiry_date);
+    return `<tr>
+      <td><strong>${b.items?.name || '—'}</strong></td>
+      <td><code style="color:var(--accent)">${b.lot_number}</code></td>
+      <td>${b.location || '—'}</td>
+      <td>${b.quantity} ${b.items?.unit || ''}</td>
+      <td>${fmtDate(b.entry_date)}</td>
+      <td>${fmtDate(b.expiry_date)}</td>
+      <td>${daysBadge(days)}</td>
+      <td>${statusBadge(days, b.status)}</td>
+      <td>
+        <div class="flex gap-2">
+          <button class="btn btn-secondary btn-icon btn-sm" title="Editar" onclick="editBatch('${b.id}')">✏️</button>
+          <button class="btn btn-danger btn-icon btn-sm" title="Excluir" onclick="confirmDelete('batch','${b.id}','Lote ${b.lot_number}')">🗑️</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('search-batches').oninput = () => renderBatches();
+document.getElementById('filter-status').onchange = () => renderBatches();
+
+// ── ITEMS TABLE ────────────────────────────────────────────
+function renderItems(filter = '') {
+  const search = (document.getElementById('search-items')?.value || filter).toLowerCase();
+  const body   = document.getElementById('items-table-body');
+
+  let rows = allItems.filter(i =>
+    !search ||
+    i.name.toLowerCase().includes(search) ||
+    (i.sku || '').toLowerCase().includes(search) ||
+    (i.category || '').toLowerCase().includes(search)
+  );
+
+  if (rows.length === 0) {
+    body.innerHTML = `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🗂️</div><p>Nenhum item cadastrado</p></div></td></tr>`;
+    return;
+  }
+
+  body.innerHTML = rows.map(i => {
+    const activeLots = allBatches.filter(b => b.item_id === i.id && b.status === 'active').length;
+    return `<tr>
+      <td><strong>${i.name}</strong></td>
+      <td><code style="color:var(--text2)">${i.sku || '—'}</code></td>
+      <td>${i.category || '—'}</td>
+      <td>${i.unit}</td>
+      <td>${i.location || '—'}</td>
+      <td>${i.min_stock}</td>
+      <td>${activeLots > 0 ? `<span class="badge badge-green">${activeLots}</span>` : '<span class="badge badge-gray">0</span>'}</td>
+      <td>
+        <div class="flex gap-2">
+          <button class="btn btn-secondary btn-icon btn-sm" title="Editar" onclick="editItem('${i.id}')">✏️</button>
+          <button class="btn btn-danger btn-icon btn-sm" title="Excluir" onclick="confirmDelete('item','${i.id}','${i.name}')">🗑️</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('search-items').oninput = () => renderItems();
+
+// ── MOVEMENTS TABLE ────────────────────────────────────────
+function renderMovements() {
+  const search = document.getElementById('search-movements').value.toLowerCase();
+  const type   = document.getElementById('filter-movement-type').value;
+  const body   = document.getElementById('movements-table-body');
+
+  let rows = allMovements.filter(m => {
+    const matchSearch = !search ||
+      (m.items?.name || '').toLowerCase().includes(search) ||
+      (m.batches?.lot_number || '').toLowerCase().includes(search) ||
+      (m.reason || '').toLowerCase().includes(search);
+    const matchType = !type || m.type === type;
+    return matchSearch && matchType;
+  });
+
+  if (rows.length === 0) {
+    body.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">🔄</div><p>Nenhuma movimentação</p></div></td></tr>`;
+    return;
+  }
+
+  const typeLabels = { entrada: '📥 Entrada', saida: '📤 Saída', ajuste: '⚖️ Ajuste' };
+  const typeBadge  = { entrada: 'badge-green', saida: 'badge-danger', ajuste: 'badge-warn' };
+
+  body.innerHTML = rows.map(m => `<tr>
+    <td>${fmtDateTime(m.created_at)}</td>
+    <td><span class="badge ${typeBadge[m.type] || 'badge-gray'}">${typeLabels[m.type] || m.type}</span></td>
+    <td>${m.items?.name || '—'}</td>
+    <td><code style="color:var(--accent)">${m.batches?.lot_number || '—'}</code></td>
+    <td>${m.quantity}</td>
+    <td>${m.reason || '—'}</td>
+  </tr>`).join('');
+}
+
+document.getElementById('search-movements').oninput = renderMovements;
+document.getElementById('filter-movement-type').onchange = renderMovements;
+
+// ── BATCH: OPEN NEW ────────────────────────────────────────
+document.getElementById('btn-new-batch').onclick = () => {
+  document.getElementById('modal-batch-title').textContent = 'Novo Lote';
+  document.getElementById('batch-id').value = '';
+  document.getElementById('batch-item-id').value = '';
+  document.getElementById('batch-lot').value = '';
+  document.getElementById('batch-qty').value = '';
+  document.getElementById('batch-entry').value = today();
+  document.getElementById('batch-expiry').value = '';
+  document.getElementById('batch-location').value = '';
+  document.getElementById('batch-notes').value = '';
+  openModal('modal-batch');
+};
+
+document.getElementById('btn-qr-scan').onclick = () => {
+  document.getElementById('modal-batch-title').textContent = 'Novo Lote';
+  document.getElementById('batch-id').value = '';
+  document.getElementById('batch-item-id').value = '';
+  document.getElementById('batch-lot').value = '';
+  document.getElementById('batch-qty').value = '';
+  document.getElementById('batch-entry').value = today();
+  document.getElementById('batch-expiry').value = '';
+  document.getElementById('batch-location').value = '';
+  document.getElementById('batch-notes').value = '';
+  openModal('modal-batch');
+};
+
+// ── BATCH: EDIT ────────────────────────────────────────────
+function editBatch(id) {
+  const b = allBatches.find(x => x.id === id);
+  if (!b) return;
+  document.getElementById('modal-batch-title').textContent = 'Editar Lote';
+  document.getElementById('batch-id').value       = b.id;
+  document.getElementById('batch-item-id').value  = b.item_id;
+  document.getElementById('batch-lot').value      = b.lot_number;
+  document.getElementById('batch-qty').value      = b.quantity;
+  document.getElementById('batch-entry').value    = b.entry_date || today();
+  document.getElementById('batch-expiry').value   = b.expiry_date;
+  document.getElementById('batch-location').value = b.location || '';
+  document.getElementById('batch-notes').value    = b.notes || '';
+  openModal('modal-batch');
+}
+
+// ── BATCH: SAVE ────────────────────────────────────────────
+document.getElementById('btn-save-batch').onclick = async () => {
+  const id       = document.getElementById('batch-id').value;
+  const item_id  = document.getElementById('batch-item-id').value;
+  const lot      = document.getElementById('batch-lot').value.trim();
+  const qty      = parseInt(document.getElementById('batch-qty').value);
+  const entry    = document.getElementById('batch-entry').value;
+  const expiry   = document.getElementById('batch-expiry').value;
+  const location = document.getElementById('batch-location').value.trim();
+  const notes    = document.getElementById('batch-notes').value.trim();
+
+  if (!item_id || !lot || !qty || !expiry) {
+    toast('Preencha os campos obrigatórios: Item, Lote, Quantidade e Vencimento.', 'error');
+    return;
+  }
+
+  const payload = {
+    user_id: currentUser.id,
+    item_id,
+    lot_number: lot,
+    quantity: qty,
+    initial_quantity: qty,
+    expiry_date: expiry,
+    entry_date: entry || today(),
+    location: location || null,
+    notes: notes || null,
+    status: 'active'
+  };
+
+  let error;
+  if (id) {
+    ({ error } = await sb.from('batches').update(payload).eq('id', id));
+  } else {
+    ({ error } = await sb.from('batches').insert(payload));
+  }
+
+  if (error) { toast('Erro ao salvar lote: ' + error.message, 'error'); return; }
+
+  toast(id ? '✓ Lote atualizado!' : '✓ Lote cadastrado!');
+  closeModal('modal-batch');
+  await loadBatches();
+  renderDashboard();
+  renderBatches();
+};
+
+// ── ITEM: OPEN NEW ─────────────────────────────────────────
+document.getElementById('btn-new-item').onclick = () => {
+  document.getElementById('modal-item-title').textContent = 'Novo Item';
+  document.getElementById('item-id').value = '';
+  document.getElementById('item-name').value = '';
+  document.getElementById('item-sku').value = '';
+  document.getElementById('item-category').value = '';
+  document.getElementById('item-unit').value = 'un';
+  document.getElementById('item-location').value = '';
+  document.getElementById('item-min-stock').value = '0';
+  openModal('modal-item');
+};
+
+// ── ITEM: EDIT ─────────────────────────────────────────────
+function editItem(id) {
+  const i = allItems.find(x => x.id === id);
+  if (!i) return;
+  document.getElementById('modal-item-title').textContent = 'Editar Item';
+  document.getElementById('item-id').value        = i.id;
+  document.getElementById('item-name').value      = i.name;
+  document.getElementById('item-sku').value       = i.sku || '';
+  document.getElementById('item-category').value  = i.category || '';
+  document.getElementById('item-unit').value      = i.unit || 'un';
+  document.getElementById('item-location').value  = i.location || '';
+  document.getElementById('item-min-stock').value = i.min_stock || 0;
+  openModal('modal-item');
+}
+
+// ── ITEM: SAVE ─────────────────────────────────────────────
+document.getElementById('btn-save-item').onclick = async () => {
+  const id        = document.getElementById('item-id').value;
+  const name      = document.getElementById('item-name').value.trim();
+  const sku       = document.getElementById('item-sku').value.trim();
+  const category  = document.getElementById('item-category').value.trim();
+  const unit      = document.getElementById('item-unit').value;
+  const location  = document.getElementById('item-location').value.trim();
+  const min_stock = parseInt(document.getElementById('item-min-stock').value) || 0;
+
+  if (!name) { toast('Informe o nome do item.', 'error'); return; }
+
+  const payload = {
+    user_id: currentUser.id,
+    name,
+    sku: sku || null,
+    category: category || null,
+    unit,
+    location: location || null,
+    min_stock
+  };
+
+  let error;
+  if (id) {
+    ({ error } = await sb.from('items').update(payload).eq('id', id));
+  } else {
+    ({ error } = await sb.from('items').insert(payload));
+  }
+
+  if (error) { toast('Erro ao salvar item: ' + error.message, 'error'); return; }
+
+  toast(id ? '✓ Item atualizado!' : '✓ Item cadastrado!');
+  closeModal('modal-item');
+  await loadItems();
+  renderItems();
+  populateSelects();
+};
+
+// ── MOVEMENT: OPEN NEW ─────────────────────────────────────
+document.getElementById('btn-new-movement').onclick = () => {
+  document.getElementById('mov-type').value = 'entrada';
+  document.getElementById('mov-item-id').value = '';
+  document.getElementById('mov-batch-id').innerHTML = '<option value="">— Selecione o lote —</option>';
+  document.getElementById('mov-qty').value = '';
+  document.getElementById('mov-reason').value = '';
+  openModal('modal-movement');
+};
+
+// Carregar lotes quando item muda
+document.getElementById('mov-item-id').onchange = () => {
+  const itemId = document.getElementById('mov-item-id').value;
+  const batchSel = document.getElementById('mov-batch-id');
+  const batches = allBatches.filter(b => b.item_id === itemId && b.status === 'active');
+  batchSel.innerHTML = '<option value="">— Selecione o lote —</option>' +
+    batches.map(b => `<option value="${b.id}">Lote ${b.lot_number} · Venc: ${fmtDate(b.expiry_date)} · Qtd: ${b.quantity}</option>`).join('');
+};
+
+// ── MOVEMENT: SAVE ─────────────────────────────────────────
+document.getElementById('btn-save-movement').onclick = async () => {
+  const type     = document.getElementById('mov-type').value;
+  const item_id  = document.getElementById('mov-item-id').value;
+  const batch_id = document.getElementById('mov-batch-id').value;
+  const qty      = parseInt(document.getElementById('mov-qty').value);
+  const reason   = document.getElementById('mov-reason').value.trim();
+
+  if (!item_id || !qty) { toast('Preencha item e quantidade.', 'error'); return; }
+
+  const payload = {
+    user_id: currentUser.id,
+    item_id,
+    batch_id: batch_id || null,
+    type,
+    quantity: qty,
+    reason: reason || null
+  };
+
+  const { error } = await sb.from('movements').insert(payload);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+
+  // Atualizar quantidade do lote se saída
+  if (batch_id && (type === 'saida' || type === 'ajuste')) {
+    const batch = allBatches.find(b => b.id === batch_id);
+    if (batch) {
+      const newQty = Math.max(0, batch.quantity - qty);
+      await sb.from('batches').update({
+        quantity: newQty,
+        status: newQty === 0 ? 'consumed' : 'active'
+      }).eq('id', batch_id);
+    }
+  }
+
+  toast('✓ Movimentação registrada!');
+  closeModal('modal-movement');
+  await loadAll();
+};
+
+// ── DELETE CONFIRM ─────────────────────────────────────────
+let pendingDelete = null;
+
+function confirmDelete(type, id, label) {
+  pendingDelete = { type, id };
+  document.getElementById('confirm-text').textContent =
+    `Excluir "${label}"? Esta ação é permanente.`;
+  openModal('modal-confirm');
+}
+
+document.getElementById('btn-confirm-delete').onclick = async () => {
+  if (!pendingDelete) return;
+  const { type, id } = pendingDelete;
+  const table = type === 'batch' ? 'batches' : 'items';
+  const { error } = await sb.from(table).delete().eq('id', id);
+  if (error) { toast('Erro ao excluir: ' + error.message, 'error'); return; }
+  toast('✓ Registro excluído.');
+  closeModal('modal-confirm');
+  pendingDelete = null;
+  await loadAll();
+};
+
+// ── QR / BARCODE CAMERA ────────────────────────────────────
+let codeReader = null;
+let cameraActive = false;
+
+document.getElementById('btn-start-camera').onclick = startCamera;
+
+async function startCamera() {
+  try {
+    codeReader = new ZXing.BrowserMultiFormatReader();
+    const videoEl = document.getElementById('qr-video');
+    const placeholder = document.getElementById('camera-placeholder');
+    
+    videoEl.style.display = 'block';
+    placeholder.style.display = 'none';
+
+    const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
+    const deviceId = devices.length > 0 ? devices[devices.length - 1].deviceId : undefined;
+
+    cameraActive = true;
+    codeReader.decodeFromVideoDevice(deviceId, 'qr-video', (result, err) => {
+      if (result) {
+        const text = result.getText();
+        document.getElementById('qr-result').textContent = '✓ Lido: ' + text;
+        document.getElementById('qr-result').style.display = 'block';
+
+        // Tentar preencher campos automaticamente
+        // Formato esperado: LOTE|ITEM_ID|QTD|VALIDADE ou texto simples (preenche lote)
+        if (text.includes('|')) {
+          const parts = text.split('|');
+          if (parts[0]) document.getElementById('batch-lot').value = parts[0].trim();
+          if (parts[1] && document.getElementById('batch-item-id').querySelector(`option[value="${parts[1].trim()}"]`)) {
+            document.getElementById('batch-item-id').value = parts[1].trim();
+          }
+          if (parts[2]) document.getElementById('batch-qty').value = parseInt(parts[2].trim()) || '';
+          if (parts[3]) document.getElementById('batch-expiry').value = parts[3].trim();
+        } else {
+          document.getElementById('batch-lot').value = text;
+        }
+
+        stopCamera();
+      }
+    });
+  } catch (e) {
+    toast('Erro ao acessar câmera: ' + e.message, 'error');
+  }
+}
+
+function stopCamera() {
+  if (codeReader) {
+    codeReader.reset();
+    codeReader = null;
+  }
+  cameraActive = false;
+  const videoEl = document.getElementById('qr-video');
+  if (videoEl) videoEl.style.display = 'none';
+  const placeholder = document.getElementById('camera-placeholder');
+  if (placeholder) placeholder.style.display = 'flex';
+}
+
+// ── INIT ───────────────────────────────────────────────────
+initAuth();
+</script>
+
+</body>
+</html>

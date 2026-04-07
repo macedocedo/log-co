@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LogiFIFO — Login</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- ⚠️ CONFIGURE AQUI: substitua pelos valores do seu projeto Supabase -->
+  <script>
+    const SUPABASE_URL = 'https://SEU_PROJETO.supabase.co';
+    const SUPABASE_KEY = 'SUA_ANON_KEY_AQUI';
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="login-page">
+  <div class="login-grid"></div>
+
+  <div class="login-box">
+    <div class="login-brand">
+      <div class="logo-icon">📦</div>
+      <h1>LogiFIFO</h1>
+      <p>Sistema de Logística</p>
+    </div>
+
+    <div class="login-card">
+      <h2>Acesse sua conta</h2>
+
+      <!-- LOGIN -->
+      <div id="form-login">
+        <div class="field">
+          <label>E-mail</label>
+          <input type="email" id="login-email" placeholder="seuemail@empresa.com" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label>Senha</label>
+          <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <button class="btn btn-primary" id="btn-login">Entrar</button>
+        <div class="divider"></div>
+        <p class="text-muted" style="text-align:center">
+          Não tem conta?
+          <a href="#" id="goto-register" style="color:var(--accent);text-decoration:none"> Cadastre-se</a>
+        </p>
+      </div>
+
+      <!-- REGISTER -->
+      <div id="form-register" style="display:none">
+        <div class="field">
+          <label>E-mail</label>
+          <input type="email" id="reg-email" placeholder="seuemail@empresa.com" />
+        </div>
+        <div class="field">
+          <label>Senha</label>
+          <input type="password" id="reg-pass" placeholder="Mínimo 6 caracteres" />
+        </div>
+        <div class="field">
+          <label>Confirmar senha</label>
+          <input type="password" id="reg-pass2" placeholder="Repita a senha" />
+        </div>
+        <button class="btn btn-primary" id="btn-register">Criar conta</button>
+        <div class="divider"></div>
+        <p class="text-muted" style="text-align:center">
+          Já tem conta?
+          <a href="#" id="goto-login" style="color:var(--accent);text-decoration:none"> Faça login</a>
+        </p>
+      </div>
+
+      <!-- Error msg -->
+      <div id="auth-error" style="
+        display:none;
+        margin-top:14px;
+        padding:10px 14px;
+        background:rgba(255,77,109,0.1);
+        border:1px solid rgba(255,77,109,0.3);
+        border-radius:8px;
+        color:var(--danger);
+        font-size:13px;
+      "></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const { createClient } = supabase;
+  const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  // Redirect se já logado
+  sb.auth.getSession().then(({ data }) => {
+    if (data.session) window.location.href = 'app.html';
+  });
+
+  const showErr = (msg) => {
+    const el = document.getElementById('auth-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+  };
+  const hideErr = () => { document.getElementById('auth-error').style.display = 'none'; };
+
+  // Toggle forms
+  document.getElementById('goto-register').onclick = (e) => {
+    e.preventDefault(); hideErr();
+    document.getElementById('form-login').style.display = 'none';
+    document.getElementById('form-register').style.display = 'block';
+  };
+  document.getElementById('goto-login').onclick = (e) => {
+    e.preventDefault(); hideErr();
+    document.getElementById('form-register').style.display = 'none';
+    document.getElementById('form-login').style.display = 'block';
+  };
+
+  // LOGIN
+  document.getElementById('btn-login').onclick = async () => {
+    hideErr();
+    const email = document.getElementById('login-email').value.trim();
+    const pass  = document.getElementById('login-pass').value;
+    if (!email || !pass) return showErr('Preencha todos os campos.');
+    const btn = document.getElementById('btn-login');
+    btn.innerHTML = '<span class="spinner"></span> Entrando...';
+    btn.disabled = true;
+    const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+    if (error) {
+      showErr('E-mail ou senha incorretos.');
+      btn.innerHTML = 'Entrar';
+      btn.disabled = false;
+    } else {
+      window.location.href = 'app.html';
+    }
+  };
+
+  // ENTER key on login
+  document.getElementById('login-pass').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('btn-login').click();
+  });
+
+  // REGISTER
+  document.getElementById('btn-register').onclick = async () => {
+    hideErr();
+    const email = document.getElementById('reg-email').value.trim();
+    const pass  = document.getElementById('reg-pass').value;
+    const pass2 = document.getElementById('reg-pass2').value;
+    if (!email || !pass) return showErr('Preencha todos os campos.');
+    if (pass !== pass2) return showErr('As senhas não coincidem.');
+    if (pass.length < 6) return showErr('A senha deve ter pelo menos 6 caracteres.');
+    const btn = document.getElementById('btn-register');
+    btn.innerHTML = '<span class="spinner"></span> Criando...';
+    btn.disabled = true;
+    const { error } = await sb.auth.signUp({ email, password: pass });
+    if (error) {
+      showErr(error.message);
+      btn.innerHTML = 'Criar conta';
+      btn.disabled = false;
+    } else {
+      showErr(''); 
+      document.getElementById('auth-error').style.display = 'block';
+      document.getElementById('auth-error').style.background = 'rgba(0,229,160,0.1)';
+      document.getElementById('auth-error').style.borderColor = 'rgba(0,229,160,0.3)';
+      document.getElementById('auth-error').style.color = 'var(--accent)';
+      document.getElementById('auth-error').textContent = '✓ Conta criada! Verifique seu e-mail ou faça login.';
+      btn.innerHTML = 'Criar conta';
+      btn.disabled = false;
+    }
+  };
+</script>
+
+</body>
+</html>
